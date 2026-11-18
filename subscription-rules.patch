@@ -1,0 +1,458 @@
+--- a/core/src/main/golang/native/config/process.go
++++ b/core/src/main/golang/native/config/process.go
+@@ -18,6 +18,7 @@
+ var processors = []processor{
+ 	patchExternalController, // must before patchOverride, so we only apply ExternalController in Override settings
+ 	patchOverride,
++	patchSubscriptionRules,
+ 	patchGeneral,
+ 	patchProfile,
+ 	patchDns,
+@@ -63,6 +64,7 @@
+ 
+ func patchDns(cfg *config.RawConfig, _ string) error {
+ 	if !cfg.DNS.Enable {
++		log.Infoln("订阅未启用 DNS：使用 Android VPN 默认 DNS 适配；分流规则仍来自配置")
+ 		cfg.DNS = config.DefaultRawConfig().DNS
+ 		cfg.DNS.Enable = true
+ 		cfg.DNS.NameServer = defaultNameServers
+--- a/core/src/main/golang/native/config/load.go
++++ b/core/src/main/golang/native/config/load.go
+@@ -64,7 +64,7 @@
+ 		return err
+ 	}
+ 
+-	logDns(rawCfg)
++	// Do not log DNS URLs: they may contain credentials.
+ 
+ 	cfg, err := Parse(rawCfg)
+ 	if err != nil {
+@@ -75,6 +75,7 @@
+ 
+ 	// like hub.Parse()
+ 	hub.ApplyConfig(cfg)
++	log.Infoln("规则来源：当前配置；mode=rule；顶层规则=%d；规则集=%d；本地覆写=关闭", len(rawCfg.Rule), len(rawCfg.RuleProvider))
+ 	app.ApplySubtitlePattern(rawCfg.ClashForAndroid.UiSubtitlePattern)
+ 
+ 	runtime.GC()
+--- a/core/src/main/golang/native/config/fetch.go
++++ b/core/src/main/golang/native/config/fetch.go
+@@ -42,6 +42,10 @@
+ 	if err != nil {
+ 		return nil, fetchHeader{}, err
+ 	}
++	if response.StatusCode < 200 || response.StatusCode >= 300 {
++		response.Body.Close()
++		return nil, fetchHeader{}, fmt.Errorf("订阅或规则集服务器返回 HTTP %d", response.StatusCode)
++	}
+ 	return response.Body, fetchHeader{
+ 		SubscriptionUserInfo:  response.Header.Get("subscription-userinfo"),
+ 		ProfileUpdateInterval: response.Header.Get("profile-update-interval"),
+@@ -176,7 +180,9 @@
+ 	if err != nil {
+ 		return err
+ 	}
++	var providerErr error
+ 	forEachProviders(rawCfg, func(index int, total int, name string, provider map[string]any, prefix string) {
++		if providerErr != nil { return }
+ 		bytes, _ := json.Marshal(&Status{
+ 			Action:      "FetchProviders",
+ 			Args:        []string{name},
+@@ -199,12 +205,14 @@
+ 		if !uok || !pok {
+ 			return
+ 		}
+-		if _, err := os.Stat(ps); err == nil {
++		// Refresh HTTP rule sets on subscription update, even if an old cache exists.
++		if _, err := os.Stat(ps); err == nil && !(force && prefix == RULES) {
+ 			return
+ 		}
+ 
+ 		url, err := U.Parse(us)
+ 		if err != nil {
++			providerErr = fmt.Errorf("资源集 %q 的地址无效，配置未应用", name)
+ 			return
+ 		}
+ 		if prefix == RULES {
+@@ -222,8 +230,11 @@
+ 				}
+ 			}
+ 		}
+-		_, _ = fetch(url, ps)
++		if _, err := fetch(url, ps); err != nil {
++			providerErr = fmt.Errorf("资源集 %q 下载失败；请检查网络或订阅，配置未应用", name)
++		}
+ 	})
++	if providerErr != nil { return providerErr }
+ 
+ 	bytes, _ := json.Marshal(&Status{
+ 		Action:      "Verifying",
+@@ -239,7 +250,6 @@
+ 		return err
+ 	}
+ 
+-	destroyProviders(cfg)
+-
+-	return nil
+-}
++	defer destroyProviders(cfg)
++	return validateSubscriptionProviders(cfg)
++}
+--- a/design/src/main/java/com/github/kr328/clash/design/MainDesign.kt
++++ b/design/src/main/java/com/github/kr328/clash/design/MainDesign.kt
+@@ -30,7 +30,7 @@
+         get() = binding.root
+     suspend fun setProfileName(name: String?) {
+         withContext(Dispatchers.Main) {
+-            binding.profileName = name
++            binding.profileName = name?.let { context.getString(R.string.subscription_rule_source, it) }
+         }
+     }
+ 
+@@ -50,7 +50,7 @@
+             binding.mode = when (mode) {
+                 TunnelState.Mode.Direct -> context.getString(R.string.direct_mode)
+                 TunnelState.Mode.Global -> context.getString(R.string.global_mode)
+-                TunnelState.Mode.Rule -> context.getString(R.string.rule_mode)
++                TunnelState.Mode.Rule -> context.getString(R.string.subscription_rule_mode)
+                 else -> context.getString(R.string.rule_mode)
+             }
+         }
+--- a/design/src/main/java/com/github/kr328/clash/design/component/ProxyMenu.kt
++++ b/design/src/main/java/com/github/kr328/clash/design/component/ProxyMenu.kt
+@@ -98,12 +98,13 @@
+                 ProxySort.Title -> findItem(R.id.name).isChecked = true
+                 ProxySort.Delay -> findItem(R.id.delay).isChecked = true
+             }
+-            when (mode) {
+-                null -> findItem(R.id.dont_modify).isChecked = true
+-                TunnelState.Mode.Direct -> findItem(R.id.direct_mode).isChecked = true
+-                TunnelState.Mode.Global -> findItem(R.id.global_mode).isChecked = true
+-                TunnelState.Mode.Rule -> findItem(R.id.rule_mode).isChecked = true
+-                else -> {}
++            listOf(R.id.dont_modify, R.id.direct_mode, R.id.global_mode).forEach {
++                findItem(it).isVisible = false
++            }
++            findItem(R.id.rule_mode).apply {
++                isChecked = true
++                isEnabled = false
++                title = context.getString(R.string.subscription_rule_mode)
+             }
+         }
+ 
+--- a/app/src/main/java/com/github/kr328/clash/ProxyActivity.kt
++++ b/app/src/main/java/com/github/kr328/clash/ProxyActivity.kt
+@@ -91,14 +91,10 @@
+                             }
+                         }
+                         is ProxyDesign.Request.PatchMode -> {
+-                            design.showModeSwitchTips()
+-
+-                            withClash {
+-                                val o = queryOverride(Clash.OverrideSlot.Session)
+-
+-                                o.mode = it.mode
+-                                patchOverride(Clash.OverrideSlot.Session, o)
+-                            }
++                            design.showToast(
++                                com.github.kr328.clash.design.R.string.subscription_rule_locked,
++                                com.github.kr328.clash.design.ui.ToastDuration.Long
++                            )
+                         }
+                     }
+                 }
+--- a/app/src/main/java/com/github/kr328/clash/SettingsActivity.kt
++++ b/app/src/main/java/com/github/kr328/clash/SettingsActivity.kt
+@@ -22,7 +22,10 @@
+                         SettingsDesign.Request.StartNetwork ->
+                             startActivity(NetworkSettingsActivity::class.intent)
+                         SettingsDesign.Request.StartOverride ->
+-                            startActivity(OverrideSettingsActivity::class.intent)
++                            design.showToast(
++                                com.github.kr328.clash.design.R.string.subscription_rule_locked,
++                                com.github.kr328.clash.design.ui.ToastDuration.Long
++                            )
+                         SettingsDesign.Request.StartMetaFeature ->
+                             startActivity(MetaFeatureSettingsActivity::class.intent)
+                     }
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -43,7 +43,7 @@
+         defaultConfig {
+             if (isApp) {
+                 val customApplicationId = queryConfigProperty("custom.application.id") as? String?
+-                applicationId = customApplicationId.takeIf { it?.isNotBlank() == true } ?: "com.github.metacubex.clash"
++                applicationId = customApplicationId.takeIf { it?.isNotBlank() == true } ?: "org.subrules.clash"
+             }
+             project.name.let { name ->
+                 namespace = if (name == "app") "com.github.kr328.clash"
+@@ -53,8 +53,8 @@
+             minSdk = 21
+             targetSdk = 35
+ 
+-            versionName = "2.11.36"
+-            versionCode = 211036
++            versionName = "0.1.0-subscription-preview"
++            versionCode = 1
+ 
+             resValue("string", "release_name", "v$versionName")
+             resValue("integer", "release_code", "$versionCode")
+@@ -71,7 +71,7 @@
+             if (!isApp) {
+                 consumerProguardFiles("consumer-rules.pro")
+             } else {
+-                setProperty("archivesBaseName", "cmfa-$versionName")
++                setProperty("archivesBaseName", "xlash-$versionName")
+             }
+         }
+         ndkVersion = "29.0.14206865"
+@@ -100,8 +100,8 @@
+ 
+                 buildConfigField("boolean", "PREMIUM", "Boolean.parseBoolean(\"false\")")
+ 
+-                resValue("string", "launch_name", "@string/launch_name_alpha")
+-                resValue("string", "application_name", "@string/application_name_alpha")
++                resValue("string", "launch_name", "xlash")
++                resValue("string", "application_name", "xlash")
+                 if (isApp && !removeSuffix) {
+                     applicationIdSuffix = ".alpha"
+                 }
+@@ -115,8 +115,8 @@
+                 }
+ 
+                 buildConfigField("boolean", "PREMIUM", "Boolean.parseBoolean(\"false\")")
+-                resValue("string", "launch_name", "@string/launch_name_meta")
+-                resValue("string", "application_name", "@string/application_name_meta")
++                resValue("string", "launch_name", "xlash")
++                resValue("string", "application_name", "xlash")
+ 
+                 if (isApp && !removeSuffix) {
+                     applicationIdSuffix = ".meta"
+--- a/core/src/main/golang/native/config/override.go
++++ b/core/src/main/golang/native/config/override.go
+@@ -1,11 +1,5 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
+ package config
+-
+-import (
+-	"io"
+-	"os"
+-
+-	"github.com/metacubex/mihomo/constant"
+-)
+ 
+ type OverrideSlot int
+ 
+@@ -14,52 +8,13 @@
+ 	OverrideSlotSession
+ )
+ 
+-const defaultPersistOverride = `{}`
+-const defaultSessionOverride = `{}`
++// Both the UI and the core see the same effective mode. Old override.json files
++// are intentionally ignored; neither a session override nor a restored setting
++// may replace provider rules, DNS, groups, or mode in this build.
++func ReadOverride(_ OverrideSlot) string {
++	return `{"mode":"rule"}`
++}
+ 
+-var sessionOverride = defaultSessionOverride
++func WriteOverride(_ OverrideSlot, _ string) {}
+ 
+-func overridePersistPath() string {
+-	return constant.Path.Resolve("override.json")
+-}
+-func ReadOverride(slot OverrideSlot) string {
+-	switch slot {
+-	case OverrideSlotPersist:
+-		file, err := os.OpenFile(overridePersistPath(), os.O_RDONLY, 0600)
+-		if err != nil {
+-			return defaultPersistOverride
+-		}
+-
+-		buf, err := io.ReadAll(file)
+-		if err != nil {
+-			return defaultPersistOverride
+-		}
+-
+-		return string(buf)
+-	case OverrideSlotSession:
+-		return sessionOverride
+-	}
+-
+-	return ""
+-}
+-func WriteOverride(slot OverrideSlot, content string) {
+-	switch slot {
+-	case OverrideSlotPersist:
+-		file, err := os.OpenFile(overridePersistPath(), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0600)
+-		if err != nil {
+-			return
+-		}
+-
+-		_, err = file.Write([]byte(content))
+-	case OverrideSlotSession:
+-		sessionOverride = content
+-	}
+-}
+-func ClearOverride(slot OverrideSlot) {
+-	switch slot {
+-	case OverrideSlotPersist:
+-		_ = os.Remove(overridePersistPath())
+-	case OverrideSlotSession:
+-		sessionOverride = defaultSessionOverride
+-	}
+-}
++func ClearOverride(_ OverrideSlot) {}
+--- /dev/null
++++ b/core/src/main/golang/native/config/subscription_rules.go
+@@ -0,0 +1,46 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++package config
++
++import (
++	"errors"
++	"fmt"
++	"strings"
++
++	"github.com/metacubex/mihomo/config"
++	"github.com/metacubex/mihomo/tunnel"
++)
++
++// patchSubscriptionRules deliberately leaves the rule order, groups, sub-rules
++// and provider definitions untouched. Android's existing transport adaptations
++// still run afterwards. This is a dedicated subscription-rules build.
++func patchSubscriptionRules(cfg *config.RawConfig, _ string) error {
++	if len(cfg.Rule) == 0 {
++		return errors.New("订阅没有提供 rules 分流规则；请使用订阅方的 Clash/Mihomo 完整配置，不能只导入节点")
++	}
++	for i, rule := range cfg.Rule {
++		if strings.TrimSpace(rule) == "" {
++			return fmt.Errorf("订阅第 %d 条规则为空，配置未应用", i+1)
++		}
++	}
++	cfg.Mode = tunnel.Rule
++	// Also close non-TCP controller endpoints: an external mode change would
++	// contradict the app's promise to keep subscription routing active.
++	cfg.ExternalController = ""
++	cfg.ExternalControllerTLS = ""
++	cfg.ExternalControllerUnix = ""
++	cfg.ExternalControllerPipe = ""
++	return nil
++}
++
++// Parsing provider definitions alone does not validate their payloads. Run this
++// before promoting the processing directory to the imported profile. The caller
++// must close all providers even when one of them fails.
++func validateSubscriptionProviders(cfg *config.Config) error {
++	for name, p := range cfg.RuleProviders {
++		if err := p.Initial(); err != nil {
++			// Underlying HTTP errors may contain credential-bearing subscription URLs.
++			return fmt.Errorf("规则集 %q 初始化失败；请检查网络或规则集内容，配置未应用", name)
++		}
++	}
++	return nil
++}
+--- /dev/null
++++ b/core/src/main/golang/native/config/subscription_rules_test.go
+@@ -0,0 +1,82 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++package config
++
++import (
++	"encoding/json"
++	"reflect"
++	"testing"
++
++	"github.com/metacubex/mihomo/config"
++	"github.com/metacubex/mihomo/tunnel"
++)
++
++func TestSubscriptionPreservesRoutingAndDNS(t *testing.T) {
++	cfg := config.DefaultRawConfig()
++	cfg.Mode = tunnel.Global
++	cfg.Rule = []string{"DOMAIN,example.com,Provider", "RULE-SET,remote,DIRECT", "MATCH,Provider"}
++	cfg.SubRules = map[string][]string{"child": {"MATCH,DIRECT"}}
++	cfg.ProxyGroup = []map[string]any{{"name": "Provider", "type": "select", "proxies": []any{"DIRECT"}}}
++	cfg.RuleProvider = map[string]map[string]any{"remote": {"type": "http", "url": "https://example.com/rules", "path": "remote.yaml"}}
++	cfg.DNS.Enable = true
++	cfg.DNS.NameServer = []string{"https://dns.example.com/dns-query"}
++	routing := func() []byte {
++		b, err := json.Marshal([]any{cfg.Rule, cfg.SubRules, cfg.ProxyGroup, cfg.ProxyProvider, cfg.RuleProvider, cfg.DNS})
++		if err != nil {
++			t.Fatal(err)
++		}
++		return b
++	}
++	before := routing()
++	if err := patchSubscriptionRules(cfg, ""); err != nil {
++		t.Fatal(err)
++	}
++	if cfg.Mode != tunnel.Rule {
++		t.Fatal("subscription mode must be rule")
++	}
++	if !reflect.DeepEqual(before, routing()) {
++		t.Fatal("subscription routing or DNS was changed")
++	}
++}
++
++func TestSubscriptionRejectsMissingOrBlankRules(t *testing.T) {
++	for _, rules := range [][]string{nil, {}, {" "}, {"MATCH,DIRECT", ""}} {
++		cfg := config.DefaultRawConfig()
++		cfg.Rule = rules
++		if err := patchSubscriptionRules(cfg, ""); err == nil {
++			t.Fatalf("accepted incomplete rules: %v", rules)
++		}
++	}
++}
++
++func TestSubscriptionRejectsModeAndRuleOverrides(t *testing.T) {
++	for _, slot := range []OverrideSlot{OverrideSlotPersist, OverrideSlotSession} {
++		WriteOverride(slot, `{"mode":"global","rules":["MATCH,DIRECT"]}`)
++		cfg := config.DefaultRawConfig()
++		cfg.Rule = []string{"MATCH,Provider"}
++		if err := patchOverride(cfg, ""); err != nil {
++			t.Fatal(err)
++		}
++		if cfg.Mode != tunnel.Rule || !reflect.DeepEqual(cfg.Rule, []string{"MATCH,Provider"}) {
++			t.Fatal("override bypassed subscription routing")
++		}
++		ClearOverride(slot)
++		if ReadOverride(slot) != `{"mode":"rule"}` {
++			t.Fatal("clear unlocked the policy")
++		}
++	}
++}
++
++func TestSubscriptionClosesAllControllerEndpoints(t *testing.T) {
++	cfg := config.DefaultRawConfig()
++	cfg.Rule = []string{"MATCH,DIRECT"}
++	cfg.ExternalController = "127.0.0.1:9090"
++	cfg.ExternalControllerTLS = "127.0.0.1:9091"
++	cfg.ExternalControllerUnix = "/tmp/controller.sock"
++	cfg.ExternalControllerPipe = "controller"
++	if err := patchSubscriptionRules(cfg, ""); err != nil {
++		t.Fatal(err)
++	}
++	if cfg.ExternalController != "" || cfg.ExternalControllerTLS != "" || cfg.ExternalControllerUnix != "" || cfg.ExternalControllerPipe != "" {
++		t.Fatal("an external controller can still bypass the rule lock")
++	}
++}
+--- /dev/null
++++ b/design/src/main/res/values/subscription_rules.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="subscription_rule_mode">Rule mode · original profile rules</string>
++    <string name="subscription_rule_source">Rules from: %1$s</string>
++    <string name="subscription_rule_locked">This build uses the original profile rules. Mode changes and local overrides are disabled. Choose nodes within the provider’s groups.</string>
++</resources>
+--- /dev/null
++++ b/design/src/main/res/values-zh-rCN/subscription_rules.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="subscription_rule_mode">规则模式 · 配置原规则</string>
++    <string name="subscription_rule_source">规则来源：%1$s</string>
++    <string name="subscription_rule_locked">此版本使用订阅或导入配置的原始规则，已锁定规则模式和本地覆写。你仍可在订阅方策略组中选择节点。</string>
++</resources>

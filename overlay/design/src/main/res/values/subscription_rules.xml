@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="subscription_rule_mode">Rule mode · original profile rules</string>
+    <string name="subscription_rule_source">Rules from: %1$s</string>
+    <string name="subscription_rule_locked">This build uses the original profile rules. Mode changes and local overrides are disabled. Choose nodes within the provider’s groups.</string>
+</resources>

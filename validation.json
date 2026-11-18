@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-18",
+  "deliverable": "uncompiled development patch bundle",
+  "upstream": "MetaCubeX/ClashMetaForAndroid v2.11.37",
+  "target_device_os": "Android 17 (user supplied)",
+  "patch_reference_tests": {
+    "passed": 9,
+    "failed": 0
+  },
+  "unified_patch_check": "passed against web-retrieved reference files",
+  "patch_round_trip": "passed against web-retrieved reference files",
+  "shell_syntax": "passed",
+  "build_preflight": {
+    "exit_code": 2,
+    "missing": "Required Go 1.26 toolchain and Android SDK/NDK. Cached Go 1.18.4 is older than the upstream requirement."
+  },
+  "go_tests": "NOT RUN",
+  "kotlin_compile": "NOT RUN",
+  "apk": "NOT BUILT",
+  "android17_device_test": "NOT RUN",
+  "network_block": "GitHub clone failed in sandbox; escalation denied by permission policy",
+  "required_next_step": "real official checkout and Android build environment, then device validation",
+  "app_label": "xlash",
+  "apk_output": "artifacts/xlash.apk",
+  "workflow": "configured and syntax checked, not dispatched"
+}

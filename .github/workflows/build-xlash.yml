@@ -1,0 +1,41 @@
+name: Build xlash
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: https://github.com/MetaCubeX/go/releases/download/build
+          go-version: '1.26'
+          cache: false
+      - name: Prepare the Android toolchain
+        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1'
+      - name: Prepare upstream Go patches on this runner
+        shell: bash
+        run: |
+          git clone --branch v2.11.37 --single-branch https://github.com/MetaCubeX/ClashMetaForAndroid.git source
+          shopt -s nullglob
+          for go_patch in "$PWD"/source/.github/patch/*.patch; do
+            patch -d "$(go env GOROOT)" -p1 < "$go_patch"
+          done
+      - name: Build and verify the APK
+        run: bash build-preview.sh source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xlash
+          path: artifacts/xlash.apk
+          if-no-files-found: error

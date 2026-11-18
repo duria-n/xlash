@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="subscription_rule_mode">规则模式 · 配置原规则</string>
+    <string name="subscription_rule_source">规则来源：%1$s</string>
+    <string name="subscription_rule_locked">此版本使用订阅或导入配置的原始规则，已锁定规则模式和本地覆写。你仍可在订阅方策略组中选择节点。</string>
+</resources>
