@@ -25,7 +25,7 @@ class PatchTests(unittest.TestCase):
 
     def test_reference_version_can_be_patched_without_mutating_dry_run(self):
         changes = patcher.planned_changes(self.checkout)
-        self.assertEqual(len(changes), 13)
+        self.assertEqual(len(changes), 14)
         for name, text in self.files.items():
             self.assertEqual((self.checkout / name).read_text(), text)
 

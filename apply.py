@@ -26,6 +26,9 @@ def replace_once(source: str, before: str, after: str, path: str) -> str:
 
 def planned_changes(checkout: Path) -> dict[str, str]:
     edits: dict[str, list[tuple[str, str]]] = {
+        "core/src/main/golang/native/app/dns.go": [
+            ("package app\n", "//go:build android\n\npackage app\n"),
+        ],
         GO + "process.go": [
             ("\tpatchOverride,\n", "\tpatchOverride,\n\tpatchSubscriptionRules,\n"),
             ("\tif !cfg.DNS.Enable {\n", '\tif !cfg.DNS.Enable {\n\t\tlog.Infoln("订阅未启用 DNS：使用 Android VPN 默认 DNS 适配；分流规则仍来自配置")\n'),
