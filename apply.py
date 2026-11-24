@@ -32,7 +32,7 @@ def planned_changes(checkout: Path) -> dict[str, str]:
         ],
         GO + "load.go": [
             ("\tlogDns(rawCfg)\n", '\t// Do not log DNS URLs: they may contain credentials.\n'),
-            ("\thub.ApplyConfig(cfg)\n\tapp.ApplySubtitlePattern", '\thub.ApplyConfig(cfg)\n\tlog.Infoln("规则来源：当前配置；mode=rule；顶层规则=%d；规则集=%d；本地覆写=关闭", len(rawCfg.Rule), len(rawCfg.RuleProvider))\n\tapp.ApplySubtitlePattern'),
+            ("\thub.ApplyConfig(cfg)\n\n\tapp.ApplySubtitlePattern", '\thub.ApplyConfig(cfg)\n\tlog.Infoln("规则来源：当前配置；mode=rule；顶层规则=%d；规则集=%d；本地覆写=关闭", len(rawCfg.Rule), len(rawCfg.RuleProvider))\n\n\tapp.ApplySubtitlePattern'),
         ],
         GO + "fetch.go": [
             ("\treturn response.Body, fetchHeader{", '\tif response.StatusCode < 200 || response.StatusCode >= 300 {\n\t\tresponse.Body.Close()\n\t\treturn nil, fetchHeader{}, fmt.Errorf("订阅或规则集服务器返回 HTTP %d", response.StatusCode)\n\t}\n\treturn response.Body, fetchHeader{'),
@@ -69,6 +69,7 @@ def planned_changes(checkout: Path) -> dict[str, str]:
                                 val o = queryOverride(Clash.OverrideSlot.Session)
 
                                 o.mode = it.mode
+
                                 patchOverride(Clash.OverrideSlot.Session, o)
                             }""", """                            design.showToast(
                                 com.github.kr328.clash.design.R.string.subscription_rule_locked,

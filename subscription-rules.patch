@@ -1,6 +1,6 @@
 --- a/core/src/main/golang/native/config/process.go
 +++ b/core/src/main/golang/native/config/process.go
-@@ -18,6 +18,7 @@
+@@ -19,6 +19,7 @@
  var processors = []processor{
  	patchExternalController, // must before patchOverride, so we only apply ExternalController in Override settings
  	patchOverride,
@@ -8,7 +8,7 @@
  	patchGeneral,
  	patchProfile,
  	patchDns,
-@@ -63,6 +64,7 @@
+@@ -67,6 +68,7 @@
  
  func patchDns(cfg *config.RawConfig, _ string) error {
  	if !cfg.DNS.Enable {
@@ -18,7 +18,7 @@
  		cfg.DNS.NameServer = defaultNameServers
 --- a/core/src/main/golang/native/config/load.go
 +++ b/core/src/main/golang/native/config/load.go
-@@ -64,7 +64,7 @@
+@@ -66,7 +66,7 @@
  		return err
  	}
  
@@ -27,20 +27,20 @@
  
  	cfg, err := Parse(rawCfg)
  	if err != nil {
-@@ -75,6 +75,7 @@
+@@ -77,6 +77,7 @@
  
  	// like hub.Parse()
  	hub.ApplyConfig(cfg)
 +	log.Infoln("规则来源：当前配置；mode=rule；顶层规则=%d；规则集=%d；本地覆写=关闭", len(rawCfg.Rule), len(rawCfg.RuleProvider))
+ 
  	app.ApplySubtitlePattern(rawCfg.ClashForAndroid.UiSubtitlePattern)
  
- 	runtime.GC()
 --- a/core/src/main/golang/native/config/fetch.go
 +++ b/core/src/main/golang/native/config/fetch.go
-@@ -42,6 +42,10 @@
- 	if err != nil {
+@@ -45,6 +45,10 @@
  		return nil, fetchHeader{}, err
  	}
+ 
 +	if response.StatusCode < 200 || response.StatusCode >= 300 {
 +		response.Body.Close()
 +		return nil, fetchHeader{}, fmt.Errorf("订阅或规则集服务器返回 HTTP %d", response.StatusCode)
@@ -48,20 +48,20 @@
  	return response.Body, fetchHeader{
  		SubscriptionUserInfo:  response.Header.Get("subscription-userinfo"),
  		ProfileUpdateInterval: response.Header.Get("profile-update-interval"),
-@@ -176,7 +180,9 @@
- 	if err != nil {
+@@ -186,7 +190,9 @@
  		return err
  	}
+ 
 +	var providerErr error
  	forEachProviders(rawCfg, func(index int, total int, name string, provider map[string]any, prefix string) {
 +		if providerErr != nil { return }
  		bytes, _ := json.Marshal(&Status{
  			Action:      "FetchProviders",
  			Args:        []string{name},
-@@ -199,12 +205,14 @@
- 		if !uok || !pok {
+@@ -210,12 +216,14 @@
  			return
  		}
+ 
 -		if _, err := os.Stat(ps); err == nil {
 +		// Refresh HTTP rule sets on subscription update, even if an old cache exists.
 +		if _, err := os.Stat(ps); err == nil && !(force && prefix == RULES) {
@@ -73,11 +73,11 @@
 +			providerErr = fmt.Errorf("资源集 %q 的地址无效，配置未应用", name)
  			return
  		}
- 		if prefix == RULES {
-@@ -222,8 +230,11 @@
- 				}
+ 
+@@ -235,8 +243,11 @@
  			}
  		}
+ 
 -		_, _ = fetch(url, ps)
 +		if _, err := fetch(url, ps); err != nil {
 +			providerErr = fmt.Errorf("资源集 %q 下载失败；请检查网络或订阅，配置未应用", name)
@@ -87,7 +87,7 @@
  
  	bytes, _ := json.Marshal(&Status{
  		Action:      "Verifying",
-@@ -239,7 +250,6 @@
+@@ -252,7 +263,6 @@
  		return err
  	}
  
@@ -100,8 +100,8 @@
 +}
 --- a/design/src/main/java/com/github/kr328/clash/design/MainDesign.kt
 +++ b/design/src/main/java/com/github/kr328/clash/design/MainDesign.kt
-@@ -30,7 +30,7 @@
-         get() = binding.root
+@@ -33,7 +33,7 @@
+ 
      suspend fun setProfileName(name: String?) {
          withContext(Dispatchers.Main) {
 -            binding.profileName = name
@@ -109,7 +109,7 @@
          }
      }
  
-@@ -50,7 +50,7 @@
+@@ -54,7 +54,7 @@
              binding.mode = when (mode) {
                  TunnelState.Mode.Direct -> context.getString(R.string.direct_mode)
                  TunnelState.Mode.Global -> context.getString(R.string.global_mode)
@@ -120,10 +120,10 @@
          }
 --- a/design/src/main/java/com/github/kr328/clash/design/component/ProxyMenu.kt
 +++ b/design/src/main/java/com/github/kr328/clash/design/component/ProxyMenu.kt
-@@ -98,12 +98,13 @@
-                 ProxySort.Title -> findItem(R.id.name).isChecked = true
+@@ -106,12 +106,13 @@
                  ProxySort.Delay -> findItem(R.id.delay).isChecked = true
              }
+ 
 -            when (mode) {
 -                null -> findItem(R.id.dont_modify).isChecked = true
 -                TunnelState.Mode.Direct -> findItem(R.id.direct_mode).isChecked = true
@@ -142,7 +142,7 @@
  
 --- a/app/src/main/java/com/github/kr328/clash/ProxyActivity.kt
 +++ b/app/src/main/java/com/github/kr328/clash/ProxyActivity.kt
-@@ -91,14 +91,10 @@
+@@ -100,15 +100,10 @@
                              }
                          }
                          is ProxyDesign.Request.PatchMode -> {
@@ -152,6 +152,7 @@
 -                                val o = queryOverride(Clash.OverrideSlot.Session)
 -
 -                                o.mode = it.mode
+-
 -                                patchOverride(Clash.OverrideSlot.Session, o)
 -                            }
 +                            design.showToast(
@@ -163,7 +164,7 @@
                  }
 --- a/app/src/main/java/com/github/kr328/clash/SettingsActivity.kt
 +++ b/app/src/main/java/com/github/kr328/clash/SettingsActivity.kt
-@@ -22,7 +22,10 @@
+@@ -23,7 +23,10 @@
                          SettingsDesign.Request.StartNetwork ->
                              startActivity(NetworkSettingsActivity::class.intent)
                          SettingsDesign.Request.StartOverride ->
@@ -177,16 +178,16 @@
                      }
 --- a/build.gradle.kts
 +++ b/build.gradle.kts
-@@ -43,7 +43,7 @@
+@@ -47,7 +47,7 @@
          defaultConfig {
              if (isApp) {
                  val customApplicationId = queryConfigProperty("custom.application.id") as? String?
 -                applicationId = customApplicationId.takeIf { it?.isNotBlank() == true } ?: "com.github.metacubex.clash"
 +                applicationId = customApplicationId.takeIf { it?.isNotBlank() == true } ?: "org.subrules.clash"
              }
+ 
              project.name.let { name ->
-                 namespace = if (name == "app") "com.github.kr328.clash"
-@@ -53,8 +53,8 @@
+@@ -58,8 +58,8 @@
              minSdk = 21
              targetSdk = 35
  
@@ -197,7 +198,7 @@
  
              resValue("string", "release_name", "v$versionName")
              resValue("integer", "release_code", "$versionCode")
-@@ -71,7 +71,7 @@
+@@ -77,7 +77,7 @@
              if (!isApp) {
                  consumerProguardFiles("consumer-rules.pro")
              } else {
@@ -205,8 +206,8 @@
 +                setProperty("archivesBaseName", "xlash-$versionName")
              }
          }
-         ndkVersion = "29.0.14206865"
-@@ -100,8 +100,8 @@
+ 
+@@ -108,8 +108,8 @@
  
                  buildConfigField("boolean", "PREMIUM", "Boolean.parseBoolean(\"false\")")
  
@@ -214,13 +215,13 @@
 -                resValue("string", "application_name", "@string/application_name_alpha")
 +                resValue("string", "launch_name", "xlash")
 +                resValue("string", "application_name", "xlash")
+ 
                  if (isApp && !removeSuffix) {
                      applicationIdSuffix = ".alpha"
-                 }
-@@ -115,8 +115,8 @@
-                 }
+@@ -125,8 +125,8 @@
  
                  buildConfigField("boolean", "PREMIUM", "Boolean.parseBoolean(\"false\")")
+ 
 -                resValue("string", "launch_name", "@string/launch_name_meta")
 -                resValue("string", "application_name", "@string/application_name_meta")
 +                resValue("string", "launch_name", "xlash")
@@ -243,25 +244,24 @@
  
  type OverrideSlot int
  
-@@ -14,52 +8,13 @@
+@@ -14,55 +8,13 @@
  	OverrideSlotSession
  )
  
 -const defaultPersistOverride = `{}`
 -const defaultSessionOverride = `{}`
+-
+-var sessionOverride = defaultSessionOverride
+-
+-func overridePersistPath() string {
+-	return constant.Path.Resolve("override.json")
 +// Both the UI and the core see the same effective mode. Old override.json files
 +// are intentionally ignored; neither a session override nor a restored setting
 +// may replace provider rules, DNS, groups, or mode in this build.
 +func ReadOverride(_ OverrideSlot) string {
 +	return `{"mode":"rule"}`
-+}
+ }
  
--var sessionOverride = defaultSessionOverride
-+func WriteOverride(_ OverrideSlot, _ string) {}
- 
--func overridePersistPath() string {
--	return constant.Path.Resolve("override.json")
--}
 -func ReadOverride(slot OverrideSlot) string {
 -	switch slot {
 -	case OverrideSlotPersist:
@@ -269,7 +269,8 @@
 -		if err != nil {
 -			return defaultPersistOverride
 -		}
--
++func WriteOverride(_ OverrideSlot, _ string) {}
+ 
 -		buf, err := io.ReadAll(file)
 -		if err != nil {
 -			return defaultPersistOverride
@@ -282,6 +283,7 @@
 -
 -	return ""
 -}
+-
 -func WriteOverride(slot OverrideSlot, content string) {
 -	switch slot {
 -	case OverrideSlotPersist:
@@ -295,6 +297,7 @@
 -		sessionOverride = content
 -	}
 -}
+-
 -func ClearOverride(slot OverrideSlot) {
 -	switch slot {
 -	case OverrideSlotPersist:
