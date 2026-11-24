@@ -82,6 +82,9 @@ def planned_changes(checkout: Path) -> dict[str, str]:
         APP + "SettingsActivity.kt": [
             ("startActivity(OverrideSettingsActivity::class.intent)", "design.showToast(\n                                com.github.kr328.clash.design.R.string.subscription_rule_locked,\n                                com.github.kr328.clash.design.ui.ToastDuration.Long\n                            )"),
         ],
+        "app/src/main/AndroidManifest.xml": [
+            ('android:name=".MainActivityAlias"\n            android:exported="true"', 'android:name=".MainActivityAlias"\n            android:exported="true"\n            android:label="@string/application_name"'),
+        ],
         "build.gradle.kts": [
             ('?: "com.github.metacubex.clash"', '?: "org.subrules.clash"'),
             ('versionName = "2.11.36"', 'versionName = "0.1.0-subscription-preview"'),

@@ -22,6 +22,19 @@ for tool in aapt apksigner zipalign; do
         exit 2
     fi
 done
+apk_analyzer=$(command -v apkanalyzer || true)
+if [[ -z "$apk_analyzer" ]]; then
+    for tool in "$sdk_dir"/cmdline-tools/*/bin/apkanalyzer; do
+        if [[ -x "$tool" ]]; then
+            apk_analyzer="$tool"
+            break
+        fi
+    done
+fi
+if [[ -z "$apk_analyzer" ]]; then
+    echo '缺少 apkanalyzer，请安装 Android SDK Command-line Tools。' >&2
+    exit 2
+fi
 if [[ ! -d "$source_dir" ]]; then
     git clone --branch v2.11.37 --single-branch https://github.com/MetaCubeX/ClashMetaForAndroid.git "$source_dir"
 fi
@@ -64,14 +77,32 @@ apk="$apk_dir/$apk_name"
 "$build_tools/apksigner" verify "$apk"
 "$build_tools/zipalign" -c -P 16 4 "$apk"
 badging=$("$build_tools/aapt" dump badging "$apk")
-python3 - "$badging" <<'PY'
+manifest=$("$apk_analyzer" manifest print "$apk")
+python3 - "$badging" "$manifest" <<'PY'
 import re
 import sys
+import xml.etree.ElementTree as ET
 
 labels = re.findall(r"^application-label(?:-[^:]+)?:'([^']*)'$", sys.argv[1], re.M)
-launcher = re.search(r"^launchable-activity:.*?label='([^']*)'", sys.argv[1], re.M)
-if not labels or set(labels) != {'xlash'} or not launcher or launcher[1] not in ('', 'xlash'):
-    sys.exit('APK 应用或桌面名称校验失败')
+if set(labels) != {"xlash"}:
+    sys.exit(f"APK 应用名称校验失败：{sorted(set(labels))!r}")
+
+# Legacy aapt badging omits launcher entries declared as activity aliases.
+android = "{http://schemas.android.com/apk/res/android}"
+application = ET.fromstring(sys.argv[2]).find("application")
+app_label = application.get(android + "label")
+launchers = []
+for activity in application:
+    if activity.tag not in ("activity", "activity-alias"):
+        continue
+    for intent in activity.findall("intent-filter"):
+        actions = {item.get(android + "name") for item in intent.findall("action")}
+        categories = {item.get(android + "name") for item in intent.findall("category")}
+        if "android.intent.action.MAIN" in actions and "android.intent.category.LAUNCHER" in categories:
+            launchers.append(activity)
+            break
+if not launchers or not app_label or any(item.get(android + "label") != app_label for item in launchers):
+    sys.exit("APK 桌面启动入口缺失，或其标签与已校验的应用名称不同")
 PY
 mkdir -p "$bundle_dir/artifacts"
 install -m 644 "$apk" "$bundle_dir/artifacts/xlash.apk.tmp"

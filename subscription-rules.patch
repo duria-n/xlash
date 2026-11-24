@@ -184,6 +184,16 @@
                          SettingsDesign.Request.StartMetaFeature ->
                              startActivity(MetaFeatureSettingsActivity::class.intent)
                      }
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -62,6 +62,7 @@
+         <activity-alias
+             android:name=".MainActivityAlias"
+             android:exported="true"
++            android:label="@string/application_name"
+             android:targetActivity=".MainActivity">
+             <intent-filter>
+                 <action android:name="android.intent.action.MAIN" />
 --- a/build.gradle.kts
 +++ b/build.gradle.kts
 @@ -47,7 +47,7 @@

@@ -25,7 +25,7 @@ class PatchTests(unittest.TestCase):
 
     def test_reference_version_can_be_patched_without_mutating_dry_run(self):
         changes = patcher.planned_changes(self.checkout)
-        self.assertEqual(len(changes), 14)
+        self.assertEqual(len(changes), 15)
         for name, text in self.files.items():
             self.assertEqual((self.checkout / name).read_text(), text)
 
@@ -40,10 +40,17 @@ class PatchTests(unittest.TestCase):
                 self.assertEqual((self.checkout / name).read_text(), self.files[name])
 
     def test_all_flavors_label_launcher_and_application_xlash(self):
-        build = patcher.planned_changes(self.checkout)["build.gradle.kts"]
+        changes = patcher.planned_changes(self.checkout)
+        build = changes["build.gradle.kts"]
         for label in ("launch_name", "application_name"):
             lines = [s.strip() for s in build.splitlines() if f'resValue("string", "{label}",' in s]
             self.assertEqual(lines, [f'resValue("string", "{label}", "xlash")'] * 2)
+        manifest = ET.fromstring(changes["app/src/main/AndroidManifest.xml"])
+        application = manifest.find("application")
+        alias = application.find("activity-alias")
+        label_attr = "{http://schemas.android.com/apk/res/android}label"
+        self.assertEqual(application.get(label_attr), "@string/application_name")
+        self.assertEqual(alias.get(label_attr), application.get(label_attr))
 
     def test_existing_overlay_file_is_not_overwritten(self):
         p = self.checkout / patcher.GO / "subscription_rules.go"
