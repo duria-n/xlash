@@ -25,7 +25,9 @@ class PatchTests(unittest.TestCase):
 
     def test_reference_version_can_be_patched_without_mutating_dry_run(self):
         changes = patcher.planned_changes(self.checkout)
-        self.assertEqual(len(changes), 19)
+        overlay = ROOT / "overlay"
+        overlay_files = {p.relative_to(overlay).as_posix() for p in overlay.rglob("*") if p.is_file()}
+        self.assertEqual(changes.keys(), self.files.keys() | overlay_files)
         for name, text in self.files.items():
             self.assertEqual((self.checkout / name).read_text(), text)
 
@@ -107,9 +109,23 @@ class PatchTests(unittest.TestCase):
         self.assertIn("return validateSubscriptionProviders(cfg)", source)
 
     def test_resource_files_parse_and_keys_match(self):
-        resources = [ET.parse(p).getroot() for p in (ROOT / "overlay/design").rglob("*.xml")]
-        self.assertEqual(len(resources), 2)
-        self.assertEqual({s.attrib["name"] for s in resources[0]}, {s.attrib["name"] for s in resources[1]})
+        resources = ROOT / "overlay/design/src/main/res"
+        for path in (resources / "values").glob("*.xml"):
+            default = ET.parse(path).getroot()
+            translated = ET.parse(resources / "values-zh-rCN" / path.name).getroot()
+            self.assertEqual({s.attrib["name"] for s in default}, {s.attrib["name"] for s in translated})
+
+    def test_service_teardown_preserves_restore_intent(self):
+        changes = patcher.planned_changes(self.checkout)
+        status = changes[patcher.SERVICE + "StatusProvider.kt"]
+        self.assertNotIn("shouldStartClashOnBoot = value", status)
+        for name in ("TunService", "ClashService"):
+            source = changes[patcher.SERVICE + name + ".kt"]
+            on_destroy = source.split("override fun onDestroy()", 1)[1].split("override fun", 1)[0]
+            self.assertNotIn("shouldStartClashOnBoot", on_destroy)
+            self.assertIn("if (!ownsRuntime)", on_destroy)
+            self.assertIn("return START_STICKY", source)
+        self.assertIn("shouldStartClashOnBoot = false", changes[patcher.SERVICE + "clash/module/CloseModule.kt"])
 
 
 if __name__ == "__main__":

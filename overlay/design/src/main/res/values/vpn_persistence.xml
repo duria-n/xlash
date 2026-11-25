@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="always_on_vpn_settings">Always-on VPN</string>
+    <string name="always_on_vpn_summary">Open Android VPN settings to let the system restart xlash when needed.</string>
+    <string name="always_on_vpn_unavailable">Open VPN settings from the Android Settings app.</string>
+</resources>

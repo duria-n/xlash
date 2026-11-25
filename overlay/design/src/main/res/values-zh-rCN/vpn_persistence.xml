@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="always_on_vpn_settings">始终开启 VPN</string>
+    <string name="always_on_vpn_summary">打开 Android 的 VPN 设置，将 xlash 设为始终开启，让系统在需要时恢复连接。</string>
+    <string name="always_on_vpn_unavailable">请在 Android 系统设置中打开 VPN 设置。</string>
+</resources>

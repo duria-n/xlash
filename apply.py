@@ -16,6 +16,7 @@ TAG = "v2.11.37"
 GO = "core/src/main/golang/native/config/"
 DESIGN = "design/src/main/java/com/github/kr328/clash/design/"
 APP = "app/src/main/java/com/github/kr328/clash/"
+SERVICE = "service/src/main/java/com/github/kr328/clash/service/"
 
 
 def replace_once(source: str, before: str, after: str, path: str) -> str:
@@ -82,6 +83,86 @@ def planned_changes(checkout: Path) -> dict[str, str]:
         APP + "SettingsActivity.kt": [
             ("startActivity(OverrideSettingsActivity::class.intent)", "design.showToast(\n                                com.github.kr328.clash.design.R.string.subscription_rule_locked,\n                                com.github.kr328.clash.design.ui.ToastDuration.Long\n                            )"),
         ],
+        SERVICE + "StatusProvider.kt": [
+            ("""        var serviceRunning: Boolean = false
+            set(value) {
+                field = value
+
+                shouldStartClashOnBoot = value
+            }""", """        @Volatile
+        var serviceRunning: Boolean = false
+"""),
+        ],
+        SERVICE + "clash/module/CloseModule.kt": [
+            ("import com.github.kr328.clash.common.log.Log\n", "import com.github.kr328.clash.common.log.Log\nimport com.github.kr328.clash.service.StatusProvider\n"),
+            ('        Log.d("User request close")', '        StatusProvider.shouldStartClashOnBoot = false\n        Log.d("User request close")'),
+        ],
+        APP + "remote/StatusClient.kt": [
+            ("import android.net.Uri\n", "import android.net.Uri\nimport android.os.Bundle\n"),
+            ("""    fun currentProfile(): String? {
+        return try {
+            val result = context.contentResolver.call(""", """    fun isRunning(): Boolean = queryStatus() != null
+
+    fun queryStatus(): Bundle? {
+        return try {
+            context.contentResolver.call("""),
+            ('\n\n            result?.getString("name")', ''),
+            ('Log.w("Query current profile: $e", e)', 'Log.w("Query VPN status: $e", e)'),
+        ],
+        APP + "remote/Broadcasts.kt": [
+            ("    private var registered = false", "    private val status = StatusClient(context)\n    private var registered = false"),
+            ("Intents.ACTION_SERVICE_RECREATED -> {\n                    clashRunning = false", "Intents.ACTION_SERVICE_RECREATED -> {\n                    clashRunning = status.isRunning()"),
+            ("Intents.ACTION_PROFILE_LOADED -> {\n                    receivers", "Intents.ACTION_PROFILE_LOADED -> {\n                    clashRunning = status.isRunning()\n                    receivers"),
+            ("            clashRunning = StatusClient(context).currentProfile() != null", "            registered = true\n            clashRunning = status.isRunning()"),
+            ("            context.unregisterReceiver(broadcastReceiver)\n", "            context.unregisterReceiver(broadcastReceiver)\n            registered = false\n"),
+        ],
+        APP + "TileService.kt": [
+            ('        val name = StatusClient(this).currentProfile()\n\n        clashRunning = name != null\n        currentProfile = name ?: ""', '        readVpnStatus()'),
+            ("    private fun updateTile() {", """    private fun readVpnStatus() {
+        val status = StatusClient(this).queryStatus()
+        clashRunning = status != null
+        currentProfile = status?.getString("name").orEmpty()
+    }
+
+    private fun updateTile() {"""),
+            ('                    currentProfile = StatusClient(this@TileService).currentProfile() ?: ""', '                    readVpnStatus()'),
+        ],
+        APP + "ExternalControlActivity.kt": [
+            ("return StatusClient(this).currentProfile() != null", "return StatusClient(this).isRunning()"),
+        ],
+        DESIGN + "AppSettingsDesign.kt": [
+            ("import android.content.Context\n", "import android.content.Context\nimport android.os.Build\n"),
+            ("        ReCreateAllActivities\n", "        ReCreateAllActivities,\n        OpenVpnSettings,\n"),
+            ("            category(R.string.interface_)\n", """            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                clickable(
+                    title = R.string.always_on_vpn_settings,
+                    icon = R.drawable.ic_baseline_vpn_lock,
+                    summary = R.string.always_on_vpn_summary,
+                ) {
+                    clicked { requests.trySend(Request.OpenVpnSettings) }
+                }
+            }
+
+            category(R.string.interface_)
+"""),
+        ],
+        APP + "AppSettingsActivity.kt": [
+            ("import android.content.ComponentName\n", "import android.content.ActivityNotFoundException\nimport android.content.ComponentName\nimport android.content.Intent\nimport android.provider.Settings\n"),
+            ("import com.github.kr328.clash.design.model.Behavior\n", "import com.github.kr328.clash.design.model.Behavior\nimport com.github.kr328.clash.design.ui.ToastDuration\nimport com.github.kr328.clash.design.R as DesignR\n"),
+            ("""                    ApplicationObserver.createdActivities.forEach {
+                        it.recreate()
+                    }""", """                    when (it) {
+                        AppSettingsDesign.Request.ReCreateAllActivities ->
+                            ApplicationObserver.createdActivities.forEach { activity -> activity.recreate() }
+                        AppSettingsDesign.Request.OpenVpnSettings -> {
+                            try {
+                                startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+                            } catch (_: ActivityNotFoundException) {
+                                design.showToast(DesignR.string.always_on_vpn_unavailable, ToastDuration.Long)
+                            }
+                        }
+                    }"""),
+        ],
         "app/src/main/AndroidManifest.xml": [
             ('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/xlash_launcher"'),
             ('android:roundIcon="@mipmap/ic_launcher_round"', 'android:roundIcon="@mipmap/xlash_launcher"'),
@@ -98,6 +179,38 @@ def planned_changes(checkout: Path) -> dict[str, str]:
             ('resValue("string", "application_name", "@string/application_name_alpha")', 'resValue("string", "application_name", "xlash")'),
         ],
     }
+    # The proxy and VPN services share a single runtime in the background process.
+    for name in ("ClashService", "TunService"):
+        edits[SERVICE + name + ".kt"] = [
+            ("    private var reason: String? = null\n", "    private var reason: String? = null\n    private var ownsRuntime = false\n"),
+            ("                    config.onEvent {\n", "                    config.onEvent {\n                        StatusProvider.shouldStartClashOnBoot = false\n"),
+            ('        } catch (e: Exception) {\n            Log.e("Create clash runtime:', '        } catch (e: Exception) {\n            if (e is kotlinx.coroutines.CancellationException) throw e\n            StatusProvider.shouldStartClashOnBoot = false\n            Log.e("Create clash runtime:'),
+            ("        StatusProvider.serviceRunning = true\n\n", ""),
+            ("        runtime.launch()\n", """        ownsRuntime = true
+        StatusProvider.serviceRunning = true
+        StatusProvider.shouldStartClashOnBoot = true
+        runtime.launch()
+"""),
+            ("    override fun onDestroy() {\n", """    override fun onDestroy() {
+        if (!ownsRuntime) {
+            super.onDestroy()
+            return
+        }
+
+"""),
+            ("    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {\n        sendClashStarted()", "    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {\n        if (!ownsRuntime) return START_NOT_STICKY\n\n        sendClashStarted()"),
+            ("        cancelAndJoinBlocking()\n", "        cancelAndJoinBlocking()\n        StatusProvider.currentProfile = null\n"),
+        ]
+    edits[SERVICE + "TunService.kt"] += [
+        ("        return super.onStartCommand(intent, flags, startId)\n", "        return START_STICKY\n"),
+        ("    override fun onDestroy() {\n", """    override fun onRevoke() {
+        StatusProvider.shouldStartClashOnBoot = false
+        super.onRevoke()
+    }
+
+    override fun onDestroy() {
+"""),
+    ]
     result = {}
     for path, changes in edits.items():
         target = checkout / path
