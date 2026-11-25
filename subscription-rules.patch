@@ -186,6 +186,20 @@
                      }
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
+@@ -29,11 +29,11 @@
+         android:allowBackup="true"
+         android:banner="@mipmap/ic_banner"
+         android:fullBackupContent="@xml/full_backup_content"
+-        android:icon="@mipmap/ic_launcher"
++        android:icon="@mipmap/xlash_launcher"
+         android:label="@string/application_name"
+         android:localeConfig="@xml/locales_config"
+         android:networkSecurityConfig="@xml/network_security_config"
+-        android:roundIcon="@mipmap/ic_launcher_round"
++        android:roundIcon="@mipmap/xlash_launcher"
+         android:supportsRtl="true"
+         android:theme="@style/BootstrapTheme"
+         tools:ignore="GoogleAppIndexingWarning"
 @@ -62,6 +62,7 @@
          <activity-alias
              android:name=".MainActivityAlias"
@@ -247,6 +261,64 @@
  
                  if (isApp && !removeSuffix) {
                      applicationIdSuffix = ".meta"
+--- /dev/null
++++ b/app/src/main/res/drawable/xlash_icon_background.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <corners android:radius="22dp" />
++    <gradient
++        android:angle="315"
++        android:startColor="#B16EFF"
++        android:centerColor="#6645D9"
++        android:endColor="#273382"
++        android:type="linear" />
++</shape>
+--- /dev/null
++++ b/app/src/main/res/drawable/xlash_icon_foreground.xml
+@@ -0,0 +1,25 @@
++<?xml version="1.0" encoding="utf-8"?>
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="108dp"
++    android:height="108dp"
++    android:viewportWidth="108"
++    android:viewportHeight="108">
++    <path
++        android:fillColor="#FFF9F1"
++        android:fillType="evenOdd"
++        android:pathData="M 28,53
++            C 29,49 31,46 34,43 L 34,31 Q 34,27 38,29 L 49,37
++            Q 55,36 61,37 L 70,28 Q 73,26 74,31 L 76,44
++            Q 82,51 82,59 C 82,72 69,80 55,80
++            C 40,80 26,71 26,59 Q 26,56 28,53 Z
++            M 39,54 C 39,57 41,59 44,59 C 47,59 49,57 49,54
++            C 49,51 47,49 44,49 C 41,49 39,51 39,54 Z
++            M 59,54 Q 59,56 61,56 Q 62,56 63,54
++            Q 65,52 67,54 Q 68,56 69,56 Q 71,56 71,54
++            Q 71,53 70,52 Q 65,46 60,52 Q 59,53 59,54 Z
++            M 50,62 Q 50,64 54,67 Q 55,68 56,67
++            Q 60,64 60,62 Q 60,60 55,60 Q 50,60 50,62 Z" />
++    <path
++        android:fillColor="#94F6E4"
++        android:pathData="M 81,69 Q 82,73 86,74 Q 82,75 81,79 Q 80,75 76,74 Q 80,73 81,69 Z" />
++</vector>
+--- /dev/null
++++ b/app/src/main/res/mipmap-anydpi/xlash_launcher.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
++    <item android:drawable="@drawable/xlash_icon_background" />
++    <item android:drawable="@drawable/xlash_icon_foreground" />
++</layer-list>
+--- /dev/null
++++ b/app/src/main/res/mipmap-anydpi-v26/xlash_launcher.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
++    <background android:drawable="@drawable/xlash_icon_background" />
++    <foreground android:drawable="@drawable/xlash_icon_foreground" />
++    <monochrome android:drawable="@drawable/xlash_icon_foreground" />
++</adaptive-icon>
 --- a/core/src/main/golang/native/config/override.go
 +++ b/core/src/main/golang/native/config/override.go
 @@ -1,11 +1,5 @@

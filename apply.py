@@ -83,6 +83,8 @@ def planned_changes(checkout: Path) -> dict[str, str]:
             ("startActivity(OverrideSettingsActivity::class.intent)", "design.showToast(\n                                com.github.kr328.clash.design.R.string.subscription_rule_locked,\n                                com.github.kr328.clash.design.ui.ToastDuration.Long\n                            )"),
         ],
         "app/src/main/AndroidManifest.xml": [
+            ('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/xlash_launcher"'),
+            ('android:roundIcon="@mipmap/ic_launcher_round"', 'android:roundIcon="@mipmap/xlash_launcher"'),
             ('android:name=".MainActivityAlias"\n            android:exported="true"', 'android:name=".MainActivityAlias"\n            android:exported="true"\n            android:label="@string/application_name"'),
         ],
         "build.gradle.kts": [

@@ -25,7 +25,7 @@ class PatchTests(unittest.TestCase):
 
     def test_reference_version_can_be_patched_without_mutating_dry_run(self):
         changes = patcher.planned_changes(self.checkout)
-        self.assertEqual(len(changes), 15)
+        self.assertEqual(len(changes), 19)
         for name, text in self.files.items():
             self.assertEqual((self.checkout / name).read_text(), text)
 
@@ -51,6 +51,23 @@ class PatchTests(unittest.TestCase):
         label_attr = "{http://schemas.android.com/apk/res/android}label"
         self.assertEqual(application.get(label_attr), "@string/application_name")
         self.assertEqual(alias.get(label_attr), application.get(label_attr))
+
+    def test_launcher_icons_reference_packaged_resources(self):
+        changes = patcher.planned_changes(self.checkout)
+        android = "{http://schemas.android.com/apk/res/android}"
+        manifest = ET.fromstring(changes["app/src/main/AndroidManifest.xml"])
+        application = manifest.find("application")
+        self.assertEqual(application.get(android + "icon"), "@mipmap/xlash_launcher")
+        self.assertEqual(application.get(android + "roundIcon"), "@mipmap/xlash_launcher")
+        for folder, tag in (("mipmap-anydpi", "layer-list"), ("mipmap-anydpi-v26", "adaptive-icon")):
+            icon = ET.fromstring(changes[f"app/src/main/res/{folder}/xlash_launcher.xml"])
+            self.assertEqual(icon.tag, tag)
+            layers = {item.get(android + "drawable") for item in icon}
+            self.assertEqual(layers, {"@drawable/xlash_icon_background", "@drawable/xlash_icon_foreground"})
+            for drawable in layers:
+                resource = drawable.split("/")[-1]
+                ET.fromstring(changes[f"app/src/main/res/drawable/{resource}.xml"])
+        self.assertIsNotNone(icon.find("monochrome"))
 
     def test_existing_overlay_file_is_not_overwritten(self):
         p = self.checkout / patcher.GO / "subscription_rules.go"
@@ -90,7 +107,7 @@ class PatchTests(unittest.TestCase):
         self.assertIn("return validateSubscriptionProviders(cfg)", source)
 
     def test_resource_files_parse_and_keys_match(self):
-        resources = [ET.parse(p).getroot() for p in (ROOT / "overlay").rglob("*.xml")]
+        resources = [ET.parse(p).getroot() for p in (ROOT / "overlay/design").rglob("*.xml")]
         self.assertEqual(len(resources), 2)
         self.assertEqual({s.attrib["name"] for s in resources[0]}, {s.attrib["name"] for s in resources[1]})
 
